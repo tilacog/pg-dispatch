@@ -1,48 +1,105 @@
-extern crate clap;
-use self::clap::{App, Arg};
+use std::ffi::OsString;
 
-pub fn create_cli_app<'a, 'b>() -> App<'a, 'b> {
-    App::new("pg-dispatcher")
-        .version("1.0")
-        .about("Listens a PostgreSQL Notification and send through a command execution")
-        .arg(Arg::with_name("db-uri")
-             .long("db-uri")
-             .help("database connection string postgres://user:pass@host:port/dbname")
-             .required(true)
-             .takes_value(true))
-        .arg(Arg::with_name("channel")
-             .long("channel")
-             .help("channel to LISTEN")
-             .required(true)
-             .takes_value(true))
-        .arg(Arg::with_name("exec")
-             .long("exec")
-             .help("command to execute when receive a notification")
-             .required(true)
-             .takes_value(true))
-        .arg(Arg::with_name("workers")
-             .long("workers")
-             .help("max num of workers (threads) to spawn. defaults is 4")
-             .required(false)
-             .takes_value(true))
+use clap::Parser;
+
+/// Listens to a PostgreSQL notification channel and executes a command for each
+/// notification. The notification payload, if any, is sent to the command's
+/// standard input.
+#[derive(Debug, Parser)]
+#[command(name = "pg-dispatcher", version, about)]
+pub struct Cli {
+    /// Database connection string (e.g. postgres://user@host:port/dbname)
+    #[arg(long)]
+    pub db_uri: String,
+
+    /// PostgreSQL channel to LISTEN on
+    #[arg(long)]
+    pub channel: String,
+
+    /// Command to execute when a notification arrives. Arguments may be
+    /// included, e.g. `sh script.sh`.
+    #[arg(long)]
+    pub exec: String,
+
+    /// Maximum number of worker threads to spawn (default: 4)
+    #[arg(long, default_value = "4")]
+    pub workers: usize,
+}
+
+/// Parsed configuration ready for the dispatcher.
+#[derive(Debug, Clone)]
+pub struct Config {
+    pub db_url: String,
+    pub db_channel: String,
+    pub max_threads: usize,
+    pub command: Vec<OsString>,
+}
+
+impl From<Cli> for Config {
+    fn from(cli: Cli) -> Self {
+        let command = cli.exec.split_whitespace().map(OsString::from).collect();
+
+        Self {
+            db_url: cli.db_uri,
+            db_channel: cli.channel,
+            max_threads: cli.workers,
+            command,
+        }
+    }
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{create_cli_app};
+    use super::*;
 
     #[test]
-    fn create_cli_app_test() {
-        let matches = create_cli_app()
-            .get_matches_from(vec![
-                              "pg-dispatch", "--db-uri", "foodb",
-                              "--channel", "foochan",
-                              "--exec", "sh test.sh",
-                              "--workers", "5"]);
+    fn parse_required_args() {
+        let cli = Cli::try_parse_from([
+            "pg-dispatcher",
+            "--db-uri",
+            "foodb",
+            "--channel",
+            "foochan",
+            "--exec",
+            "sh test.sh",
+            "--workers",
+            "5",
+        ])
+        .unwrap();
 
-        assert_eq!("foodb", matches.value_of("db-uri").unwrap());
-        assert_eq!("foochan", matches.value_of("channel").unwrap());
-        assert_eq!("sh test.sh", matches.value_of("exec").unwrap());
-        assert_eq!("5", matches.value_of("workers").unwrap());
+        let config = Config::from(cli);
+
+        assert_eq!(config.db_url, "foodb");
+        assert_eq!(config.db_channel, "foochan");
+        assert_eq!(config.max_threads, 5);
+        assert_eq!(
+            config.command,
+            vec![OsString::from("sh"), OsString::from("test.sh")]
+        );
+    }
+
+    #[test]
+    fn default_workers_is_four() {
+        let cli = Cli::try_parse_from([
+            "pg-dispatcher",
+            "--db-uri",
+            "foodb",
+            "--channel",
+            "foochan",
+            "--exec",
+            "cat",
+        ])
+        .unwrap();
+
+        let config = Config::from(cli);
+        assert_eq!(config.max_threads, 4);
+    }
+
+    #[test]
+    fn missing_required_arg_fails() {
+        let result =
+            Cli::try_parse_from(["pg-dispatcher", "--channel", "foochan", "--exec", "cat"]);
+
+        assert!(result.is_err());
     }
 }

@@ -1,101 +1,44 @@
-extern crate clap;
+use crate::cli::Config;
+use crate::thread_pool::ThreadPool;
+use crate::traits::{CommandRunner, NotificationSource};
 
-use std::ffi::OsString;
-use thread_pool;
-
-
-#[derive(Debug, Clone)]
-pub struct Config<'a> {
-    pub db_url: &'a str,
-    pub db_channel: &'a str,
-    pub max_threads: usize,
-    pub command_vector: Vec<OsString>,
+/// Orchestrates pulling notifications from `source` and dispatching each
+/// payload to `runner`. Generic over both to enable test doubles.
+pub struct Dispatcher<R: CommandRunner> {
+    runner: R,
 }
 
-impl<'a> Config<'a> {
-    pub fn from_matches(matches: &'a clap::ArgMatches<'a>) -> Config {
-        let max_threads = match matches.value_of("workers") {
-            Some(v) => v.parse::<usize>().unwrap_or(4),
-            _ => 4,
-        };
+impl<R: CommandRunner> Dispatcher<R> {
+    pub fn new(runner: R) -> Self {
+        Self { runner }
+    }
 
-        let command_vector: Vec<OsString> = matches
-            .value_of("exec")
-            .unwrap()
-            .split_whitespace()
-            .map(|s| OsString::from(s))
-            .collect();
-
-        Config {
-            db_url: matches.value_of("db-uri").unwrap(),
-            db_channel: matches.value_of("channel").unwrap(),
-            max_threads: max_threads,
-            command_vector: command_vector,
+    /// Pull notifications from `source` and dispatch each payload.
+    /// Stops when the source is exhausted or the runner fails.
+    pub fn run<S: NotificationSource>(&self, source: &mut S) {
+        while let Some(payload) = source.next_payload() {
+            if let Err(e) = self.runner.run(&payload) {
+                eprintln!("[pg-dispatch] dispatch error: {e}");
+                break;
+            }
         }
     }
 }
 
-#[derive(Debug)]
-pub struct Dispatcher {
-    pub pool: thread_pool::ThreadPool,
-}
-
-impl Dispatcher {
-    pub fn from_config(config: &Config) -> Dispatcher {
-        Dispatcher {
-            pool: thread_pool::ThreadPool::new(config.max_threads, config.command_vector.clone()),
-        }
-    }
-
-    pub fn execute_command(&self, payload: String) {
-        self.pool.execute(payload)
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use cli;
-
-    #[test]
-    fn dispatcher_config_from_matches_test() {
-        let matches = cli::create_cli_app().get_matches_from(vec![
-            "pg-dispatch",
-            "--db-uri",
-            "foodb",
-            "--channel",
-            "foochan",
-            "--exec",
-            "sh test.sh",
-            "--workers",
-            "5",
-        ]);
-        let config = Config::from_matches(&matches);
-
-        assert_eq!(config.db_url, "foodb");
-        assert_eq!(config.db_channel, "foochan");
-        assert_eq!(
-            config.command_vector,
-            vec![OsString::from("sh"), OsString::from("test.sh")]
-        );
-        assert_eq!(config.max_threads, 5);
-    }
-
-    #[test]
-    fn dispatcher_from_config() {
-        let matches = cli::create_cli_app().get_matches_from(vec![
-            "pg-dispatch",
-            "--db-uri",
-            "foodb",
-            "--channel",
-            "foochan",
-            "--exec",
-            "sh test.sh",
-            "--workers",
-            "5",
-        ]);
-        let config = Config::from_matches(&matches);
-
-        let _disptacher = Dispatcher::from_config(&config);
-    }
+/// Convenience: build the production dispatcher from a [`Config`].
+pub fn production(config: &Config) -> Dispatcher<ThreadPool> {
+    let spec = crate::traits::CommandSpec {
+        program: config
+            .command
+            .first()
+            .cloned()
+            .expect("command must contain at least the program name"),
+        args: if config.command.len() > 1 {
+            config.command[1..].to_vec()
+        } else {
+            vec![]
+        },
+    };
+    let pool = ThreadPool::new(config.max_threads, spec);
+    Dispatcher::new(pool)
 }

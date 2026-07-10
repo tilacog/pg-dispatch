@@ -1,86 +1,80 @@
-### under development
-
 # pg-dispatch
 
-Abstract listener for PostgreSQL that listens to a single database channel and executes a
-given command when a notification arrives. The notification payload, if any, is sent
-though the executed command's standard input.
+Listens to a PostgreSQL notification channel and executes a command for each
+notification received. The notification payload, if any, is sent to the
+command's standard input.
 
 ## Installation
 
-1. `$ git clone git@github.com:common-group/pg-dispatcher.git`
-2. `$ cd pg-dispatcher`
-3. `$ cargo build --release`
+```sh
+$ git clone https://github.com/common-group/pg-dispatcher.git
+$ cd pg-dispatcher
+$ cargo build --release
+```
 
 ## Usage
 
 ```
 $ pg-dispatcher --help
 
-pg-dispatcher 1.0
-Listens a PostgreSQL Notification and send through a command execution
+Listens to a PostgreSQL notification channel and executes a command for each notification.
 
-USAGE:
-    pg-dispatcher [OPTIONS] --db-uri <db-uri> --channel <channel> --exec <exec>
+Usage: pg-dispatcher [OPTIONS] --db-uri <DB_URI> --channel <CHANNEL> --exec <EXEC>
 
-FLAGS:
-    -h, --help       Prints help information
-    -V, --version    Prints version information
-
-OPTIONS:
-        --channel <channel>    channel to LISTEN
-        --db-uri <db-uri>      database connection string postgres://user:pass@host:port/dbname
-        --exec <exec>          command to execute when receive a notification
-        --workers <workers>    max num of workers (threads) to spawn. defaults is 4
+Options:
+      --db-uri <DB_URI>      Database connection string (e.g. postgres://user@host:port/dbname)
+      --channel <CHANNEL>    PostgreSQL channel to LISTEN on
+      --exec <EXEC>          Command to execute when a notification arrives. Arguments may be
+                             included, e.g. `sh script.sh`
+      --workers <WORKERS>    Maximum number of worker threads to spawn (default: 4) [default: 4]
+  -h, --help                 Print help
+  -V, --version              Print version
 ```
 
-### Examples
+## Examples
 
-#### Dispatching a command without arguments
+### Dispatching a command without arguments
 
-The example below will listen to a PostgreSQL database channel named `test_channel` and
-execute the command `cat` whenever a new notification arrives, using `100` threads at
-maximum.
+The example below listens to a PostgreSQL channel named `test_channel` and
+executes `cat` for each notification, using up to 100 worker threads.
 
-*(Note that the `cat` command reads from standard input when no file is specified)*
+*(Note that `cat` reads from standard input when no file is specified.)*
 
 ```sh
-$ ./target/release/pg-disptacher                         \
+$ ./target/release/pg-dispatcher                       \
       --db-uri='postgres://postgres@localhost/postgres'  \
       --channel="test_channel"                           \
       --exec=cat                                         \
       --workers=100
 ```
 
-Then, connect to your PostgreSQL database and execute the following command to issue a
-notification through the `tests_channel` channel:
+Then, in a PostgreSQL session:
 
 ```sql
 postgres=# NOTIFY test_channel, 'hello from postgres';
 ```
 
-The console will then have the following output:
+Output:
 
 ```
 [pg-dispatch] Listening to channel: "test_channel".
-[worker-1] Got payload: hello from postgres.
-[worker-1] Command succeded with status code 0.
-[cat-1] hello from postgres
+[worker-0] command succeeded with status code 0.
+[cat-0] hello from postgres
 ```
 
-#### Dispatching a command with arguments
+### Dispatching a command with arguments
 
-You can also use commands with arguments, just pass them inside the same string:.
+Arguments can be included in the `--exec` string:
 
 ```sh
-$ ./target/release/pg-disptacher                         \
+$ ./target/release/pg-dispatcher                         \
       --db-uri='postgres://postgres@localhost/postgres'  \
       --channel="test_channel"                           \
       --exec="sh some-script.sh"                         \
       --workers=100
 ```
 
-Where `some-script.sh` could be like:
+Where `some-script.sh`:
 
 ```sh
 #!/bin/sh
@@ -88,10 +82,10 @@ PAYLOAD=$(cat) # read from stdin
 echo "The payload was: $PAYLOAD!"
 ```
 
-Output *(after notification was issued)*:
+Output after a notification:
+
 ```
 [pg-dispatch] Listening to channel: "test_channel".
-[worker-1] Got payload: hello from postgres.
-[worker-1] Command succeded with status code 0.
-[sh-1] The payload was: hello from postgres!
+[worker-0] command succeeded with status code 0.
+[sh-0] The payload was: hello from postgres!
 ```
