@@ -7,11 +7,11 @@ use thiserror::Error;
 pub enum Error {
     /// Failed to establish a database connection.
     #[error("failed to connect to database: {0}")]
-    Connect(#[from] postgres::Error),
+    Connect(#[from] tokio_postgres::Error),
 
     /// Failed to issue the `LISTEN` command.
     #[error("failed to issue LISTEN: {0}")]
-    Listen(postgres::Error),
+    Listen(tokio_postgres::Error),
 
     /// The channel name contains characters that are not valid in a
     /// `PostgreSQL` identifier when unquoted.

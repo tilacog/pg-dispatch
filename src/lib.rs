@@ -1,18 +1,22 @@
-//! A `PostgreSQL` `LISTEN`/`NOTIFY` dispatcher.
+//! An async `PostgreSQL` `LISTEN`/`NOTIFY` dispatcher.
 //!
 //! Listens to a `PostgreSQL` notification channel and executes a configurable
 //! command for each notification received. The notification payload is sent
 //! to the command's standard input.
 //!
+//! Built on `tokio` and `tokio-postgres` for fully async operation — no OS
+//! threads are spawned per payload. Concurrency is bounded by a
+//! [`tokio::sync::Semaphore`].
+//!
 //! # Architecture
 //!
-//! The crate is built around two traits that enable dependency inversion and
-//! full testability without a live database or subprocess:
+//! The crate is built around two async traits that enable dependency
+//! inversion and full testability without a live database or subprocess:
 //!
-//! - [`NotificationSource`] — yields notification payloads (production impl:
-//!   [`pg_source::PgNotificationSource`])
-//! - [`CommandRunner`] — executes a command for a given payload (production
-//!   impl: [`thread_pool::ThreadPool`])
+//! - [`NotificationSource`] — async stream of notification payloads
+//!   (production impl: [`PgNotificationSource`])
+//! - [`CommandRunner`] — async command execution (production impl:
+//!   [`CommandExecutor`])
 //!
 //! [`Dispatcher`] orchestrates the loop: pull a notification, dispatch it,
 //! repeat. It is generic over both traits, so you can plug in test doubles
@@ -21,20 +25,23 @@
 //! # Example (library usage)
 //!
 //! ```no_run
-//! use pg_dispatcher::{Dispatcher, PgNotificationSource, ThreadPool, CommandSpec};
+//! use pg_dispatcher::{
+//!     CommandExecutor, CommandSpec, Dispatcher, PgNotificationSource,
+//! };
 //!
-//! let source = PgNotificationSource::connect(
+//! # async fn run() -> Result<(), Box<dyn std::error::Error>> {
+//! let mut source = PgNotificationSource::connect(
 //!     "postgres://user@localhost/db",
 //!     "events",
-//! )?;
+//! ).await?;
 //!
 //! let command = CommandSpec::new("cat");
-//! let runner = ThreadPool::new(4, command);
+//! let runner = CommandExecutor::new(4, command);
 //! let dispatcher = Dispatcher::new(runner);
 //!
-//! let mut source = source;
-//! dispatcher.run(&mut source);
-//! # Ok::<(), Box<dyn std::error::Error>>(())
+//! dispatcher.run(&mut source).await;
+//! # Ok(())
+//! # }
 //! ```
 
 #![warn(clippy::pedantic)]
@@ -46,7 +53,7 @@ pub mod cli;
 pub mod dispatcher;
 pub mod error;
 pub mod pg_source;
-pub mod thread_pool;
+pub mod runner;
 pub mod traits;
 
 #[cfg(test)]
@@ -56,5 +63,5 @@ pub use cli::{Cli, Config};
 pub use dispatcher::Dispatcher;
 pub use error::Error;
 pub use pg_source::PgNotificationSource;
-pub use thread_pool::ThreadPool;
+pub use runner::{CommandExecutor, ThreadPool};
 pub use traits::{CommandRunner, CommandSpec, NotificationSource, RunError};

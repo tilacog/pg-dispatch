@@ -1,16 +1,19 @@
 use std::ffi::OsString;
 
+use async_trait::async_trait;
+
 /// A source of `PostgreSQL` notifications.
 ///
 /// Implementations are responsible for issuing `LISTEN <channel>` and
 /// yielding payloads as they arrive. This abstraction decouples the
-/// dispatcher from the concrete `postgres` crate, enabling test doubles.
+/// dispatcher from the concrete database client, enabling test doubles.
 ///
 /// See [`crate::PgNotificationSource`] for the production implementation.
-pub trait NotificationSource {
+#[async_trait]
+pub trait NotificationSource: Send {
     /// Returns the next notification payload, or `None` when the stream
     /// has ended.
-    fn next_payload(&mut self) -> Option<String>;
+    async fn next_payload(&mut self) -> Option<String>;
 }
 
 /// Runs a command for a given payload.
@@ -19,12 +22,13 @@ pub trait NotificationSource {
 /// to its stdin, and propagates stdout/stderr. Test implementations can
 /// record invocations without touching the filesystem.
 ///
-/// See [`crate::ThreadPool`] for the production implementation.
-pub trait CommandRunner {
+/// See [`crate::CommandRunner`] for the production implementation.
+#[async_trait]
+pub trait CommandRunner: Send + Sync {
     /// Execute the configured command with `payload` on stdin.
     ///
     /// Returns `Ok(())` on success, or an error describing what went wrong.
-    fn run(&self, payload: &str) -> Result<(), RunError>;
+    async fn run(&self, payload: String) -> Result<(), RunError>;
 }
 
 /// Error returned by [`CommandRunner::run`].
@@ -65,7 +69,7 @@ pub struct CommandSpec {
 }
 
 impl CommandSpec {
-    /// Create a new command spec from a program and its arguments.
+    /// Create a new command spec from a program name (no arguments).
     #[must_use]
     pub fn new(program: impl Into<OsString>) -> Self {
         Self {

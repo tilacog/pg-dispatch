@@ -25,7 +25,7 @@ pub struct Cli {
     #[arg(long)]
     pub exec: String,
 
-    /// Maximum number of worker threads to spawn.
+    /// Maximum number of concurrent command executions.
     #[arg(long, default_value = "4")]
     pub workers: usize,
 }
@@ -37,8 +37,8 @@ pub struct Config {
     pub db_url: String,
     /// `PostgreSQL` channel to LISTEN on.
     pub db_channel: String,
-    /// Maximum number of worker threads.
-    pub max_threads: usize,
+    /// Maximum number of concurrent command executions.
+    pub max_concurrency: usize,
     /// Parsed command (program + arguments).
     pub command: Vec<OsString>,
 }
@@ -50,7 +50,7 @@ impl From<Cli> for Config {
         Self {
             db_url: cli.db_uri,
             db_channel: cli.channel,
-            max_threads: cli.workers,
+            max_concurrency: cli.workers,
             command,
         }
     }
@@ -126,7 +126,7 @@ mod tests {
 
         assert_eq!(config.db_url, "foodb");
         assert_eq!(config.db_channel, "foochan");
-        assert_eq!(config.max_threads, 5);
+        assert_eq!(config.max_concurrency, 5);
         assert_eq!(
             config.command,
             vec![OsString::from("sh"), OsString::from("test.sh")]
@@ -147,7 +147,7 @@ mod tests {
         .unwrap();
 
         let config = Config::from(cli);
-        assert_eq!(config.max_threads, 4);
+        assert_eq!(config.max_concurrency, 4);
     }
 
     #[test]
@@ -163,7 +163,7 @@ mod tests {
         let config = Config {
             db_url: "postgres://localhost".into(),
             db_channel: "events".into(),
-            max_threads: 4,
+            max_concurrency: 4,
             command: vec![OsString::from("cat")],
         };
         assert!(config.validate().is_ok());
@@ -174,7 +174,7 @@ mod tests {
         let config = Config {
             db_url: "postgres://localhost".into(),
             db_channel: "_my_channel_2".into(),
-            max_threads: 4,
+            max_concurrency: 4,
             command: vec![OsString::from("cat")],
         };
         assert!(config.validate().is_ok());
@@ -185,7 +185,7 @@ mod tests {
         let config = Config {
             db_url: "postgres://localhost".into(),
             db_channel: "".into(),
-            max_threads: 4,
+            max_concurrency: 4,
             command: vec![OsString::from("cat")],
         };
         assert!(matches!(config.validate(), Err(Error::InvalidChannel(_))));
@@ -196,7 +196,7 @@ mod tests {
         let config = Config {
             db_url: "postgres://localhost".into(),
             db_channel: "9chan".into(),
-            max_threads: 4,
+            max_concurrency: 4,
             command: vec![OsString::from("cat")],
         };
         assert!(matches!(config.validate(), Err(Error::InvalidChannel(_))));
@@ -207,7 +207,7 @@ mod tests {
         let config = Config {
             db_url: "postgres://localhost".into(),
             db_channel: "ev;DROP TABLE".into(),
-            max_threads: 4,
+            max_concurrency: 4,
             command: vec![OsString::from("cat")],
         };
         assert!(matches!(config.validate(), Err(Error::InvalidChannel(_))));
@@ -218,7 +218,7 @@ mod tests {
         let config = Config {
             db_url: "postgres://localhost".into(),
             db_channel: "events".into(),
-            max_threads: 4,
+            max_concurrency: 4,
             command: vec![],
         };
         assert!(matches!(config.validate(), Err(Error::EmptyCommand)));

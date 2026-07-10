@@ -1,8 +1,10 @@
 # pg-dispatcher
 
-Listens to a `PostgreSQL` notification channel and executes a command for each
-notification received. The notification payload is sent to the command's
-standard input.
+An async `PostgreSQL` `LISTEN`/`NOTIFY` dispatcher built on `tokio` and
+`tokio-postgres`. Listens to a notification channel and executes a command for
+each notification received. The notification payload is sent to the command's
+standard input. Concurrency is bounded by a `tokio::sync::Semaphore` — no OS
+threads are spawned per payload.
 
 ## Installation
 
@@ -32,7 +34,7 @@ Options:
       --channel <CHANNEL>    PostgreSQL channel to LISTEN on
       --exec <EXEC>          Command to execute when a notification arrives. Arguments may be
                              included, e.g. `sh script.sh`
-      --workers <WORKERS>    Maximum number of worker threads to spawn [default: 4]
+      --workers <WORKERS>    Maximum number of concurrent command executions [default: 4]
   -h, --help                 Print help
   -V, --version              Print version
 ```
@@ -95,30 +97,30 @@ echo "The payload was: $PAYLOAD!"
 
 ## Library
 
-The crate can also be used as a library. The core traits
+The crate can also be used as a library. The core async traits
 [`NotificationSource`](https://docs.rs/pg-dispatcher/latest/pg_dispatcher/trait.NotificationSource.html)
 and
 [`CommandRunner`](https://docs.rs/pg-dispatcher/latest/pg_dispatcher/trait.CommandRunner.html)
 enable dependency inversion — plug in your own source or runner for testing.
 
 ```rust
-use pg_dispatcher::{Dispatcher, PgNotificationSource, ThreadPool, CommandSpec};
+use pg_dispatcher::{
+    CommandExecutor, CommandSpec, Dispatcher, PgNotificationSource,
+};
 
-fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let source = PgNotificationSource::connect(
-        "postgres://user@localhost/db",
-        "events",
-    )?;
+# async fn run() -> Result<(), Box<dyn std::error::Error>> {
+let mut source = PgNotificationSource::connect(
+    "postgres://user@localhost/db",
+    "events",
+).await?;
 
-    let command = CommandSpec::new("cat");
-    let runner = ThreadPool::new(4, command);
-    let dispatcher = Dispatcher::new(runner);
+let command = CommandSpec::new("cat");
+let runner = CommandExecutor::new(4, command);
+let dispatcher = Dispatcher::new(runner);
 
-    let mut source = source;
-    dispatcher.run(&mut source);
-
-    Ok(())
-}
+dispatcher.run(&mut source).await;
+# Ok(())
+# }
 ```
 
 ## License

@@ -1,15 +1,15 @@
 [package]
 name = "pg-dispatcher"
-version = "0.2.0"
+version = "0.3.0"
 authors = ["Antônio Roberto <forevertonny@gmail.com>", "Tiago Guimarães <tilacog@gmail.com>"]
 edition = "2021"
 rust-version = "1.74"
-description = "Listens to a PostgreSQL notification channel and executes a command for each notification"
+description = "Async PostgreSQL LISTEN/NOTIFY dispatcher that executes a command for each notification"
 license = "GPL-3.0"
 repository = "https://github.com/common-group/pg-dispatcher"
 readme = "README.md"
-keywords = ["postgres", "postgresql", "listen", "notify", "dispatcher"]
-categories = ["command-line-utilities", "database"]
+keywords = ["postgres", "postgresql", "listen", "notify", "dispatcher", "async", "tokio"]
+categories = ["command-line-utilities", "database", "asynchronous"]
 
 [[bin]]
 name = "pg-dispatcher"
@@ -21,8 +21,9 @@ path = "src/lib.rs"
 
 [dependencies]
 clap = { version = "4", features = ["derive"] }
-postgres = "0.19"
-fallible-iterator = "0.2"
+tokio = { version = "1", features = ["rt", "macros", "process", "io-util", "signal", "rt-multi-thread"] }
+tokio-postgres = "0.7"
+async-trait = "0.1"
 thiserror = "2"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }

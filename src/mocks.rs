@@ -1,6 +1,8 @@
 use std::sync::{Arc, Mutex};
 
-use crate::traits::{CommandRunner, NotificationSource, RunError};
+use async_trait::async_trait;
+
+use crate::traits::{CommandRunner, ExitError, NotificationSource, RunError};
 
 /// A mock [`NotificationSource`] that yields a pre-defined list of payloads.
 pub struct MockNotificationSource {
@@ -15,8 +17,9 @@ impl MockNotificationSource {
     }
 }
 
+#[async_trait]
 impl NotificationSource for MockNotificationSource {
-    fn next_payload(&mut self) -> Option<String> {
+    async fn next_payload(&mut self) -> Option<String> {
         if self.index < self.payloads.len() {
             let payload = self.payloads[self.index].clone();
             self.index += 1;
@@ -33,9 +36,10 @@ pub struct MockCommandRunner {
     pub invocations: Arc<Mutex<Vec<String>>>,
 }
 
+#[async_trait]
 impl CommandRunner for MockCommandRunner {
-    fn run(&self, payload: &str) -> Result<(), RunError> {
-        self.invocations.lock().unwrap().push(payload.to_owned());
+    async fn run(&self, payload: String) -> Result<(), RunError> {
+        self.invocations.lock().unwrap().push(payload);
         Ok(())
     }
 }
@@ -56,15 +60,16 @@ impl FailingCommandRunner {
     }
 }
 
+#[async_trait]
 impl CommandRunner for FailingCommandRunner {
-    fn run(&self, payload: &str) -> Result<(), RunError> {
+    async fn run(&self, payload: String) -> Result<(), RunError> {
         let count = {
             let mut inv = self.invocations.lock().unwrap();
-            inv.push(payload.to_owned());
+            inv.push(payload);
             inv.len()
         };
         if count == self.fail_on {
-            Err(RunError::Exit(crate::traits::ExitError { code: Some(1) }))
+            Err(RunError::Exit(ExitError { code: Some(1) }))
         } else {
             Ok(())
         }
