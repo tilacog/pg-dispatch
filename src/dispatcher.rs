@@ -14,11 +14,9 @@ use crate::traits::{CommandRunner, NotificationSource};
 /// use pg_dispatcher::{
 ///     Dispatcher, NotificationSource, CommandRunner, RunError,
 /// };
-/// use async_trait::async_trait;
 /// use std::sync::{Arc, Mutex};
 ///
 /// struct SeqSource { payloads: Vec<String> }
-/// #[async_trait]
 /// impl NotificationSource for SeqSource {
 ///     async fn next_payload(&mut self) -> Option<String> {
 ///         self.payloads.pop()
@@ -26,7 +24,6 @@ use crate::traits::{CommandRunner, NotificationSource};
 /// }
 ///
 /// struct EchoRunner { calls: Arc<Mutex<Vec<String>>> }
-/// #[async_trait]
 /// impl CommandRunner for EchoRunner {
 ///     async fn run(&self, payload: String) -> Result<(), RunError> {
 ///         self.calls.lock().unwrap().push(payload);

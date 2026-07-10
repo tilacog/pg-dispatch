@@ -1,7 +1,5 @@
 use std::sync::{Arc, Mutex};
 
-use async_trait::async_trait;
-
 use crate::traits::{CommandRunner, ExitError, NotificationSource, RunError};
 
 /// A mock [`NotificationSource`] that yields a pre-defined list of payloads.
@@ -17,7 +15,6 @@ impl MockNotificationSource {
     }
 }
 
-#[async_trait]
 impl NotificationSource for MockNotificationSource {
     async fn next_payload(&mut self) -> Option<String> {
         if self.index < self.payloads.len() {
@@ -36,7 +33,6 @@ pub struct MockCommandRunner {
     pub invocations: Arc<Mutex<Vec<String>>>,
 }
 
-#[async_trait]
 impl CommandRunner for MockCommandRunner {
     async fn run(&self, payload: String) -> Result<(), RunError> {
         self.invocations.lock().unwrap().push(payload);
@@ -60,7 +56,6 @@ impl FailingCommandRunner {
     }
 }
 
-#[async_trait]
 impl CommandRunner for FailingCommandRunner {
     async fn run(&self, payload: String) -> Result<(), RunError> {
         let count = {

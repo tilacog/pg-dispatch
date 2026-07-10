@@ -1,7 +1,5 @@
 use std::ffi::OsString;
 
-use async_trait::async_trait;
-
 /// A source of `PostgreSQL` notifications.
 ///
 /// Implementations are responsible for issuing `LISTEN <channel>` and
@@ -9,11 +7,10 @@ use async_trait::async_trait;
 /// dispatcher from the concrete database client, enabling test doubles.
 ///
 /// See [`crate::PgNotificationSource`] for the production implementation.
-#[async_trait]
 pub trait NotificationSource: Send {
     /// Returns the next notification payload, or `None` when the stream
     /// has ended.
-    async fn next_payload(&mut self) -> Option<String>;
+    fn next_payload(&mut self) -> impl std::future::Future<Output = Option<String>> + Send;
 }
 
 /// Runs a command for a given payload.
@@ -22,13 +19,15 @@ pub trait NotificationSource: Send {
 /// to its stdin, and propagates stdout/stderr. Test implementations can
 /// record invocations without touching the filesystem.
 ///
-/// See [`crate::CommandRunner`] for the production implementation.
-#[async_trait]
+/// See [`crate::CommandExecutor`] for the production implementation.
 pub trait CommandRunner: Send + Sync {
     /// Execute the configured command with `payload` on stdin.
     ///
     /// Returns `Ok(())` on success, or an error describing what went wrong.
-    async fn run(&self, payload: String) -> Result<(), RunError>;
+    fn run(
+        &self,
+        payload: String,
+    ) -> impl std::future::Future<Output = Result<(), RunError>> + Send;
 }
 
 /// Error returned by [`CommandRunner::run`].

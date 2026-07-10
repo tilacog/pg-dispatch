@@ -1,7 +1,6 @@
 use std::process::Stdio;
 use std::sync::Arc;
 
-use async_trait::async_trait;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::process::Command;
 use tokio::sync::Semaphore;
@@ -41,7 +40,6 @@ impl CommandExecutor {
     }
 }
 
-#[async_trait]
 impl CommandRunner for CommandExecutor {
     async fn run(&self, payload: String) -> Result<(), RunError> {
         let _permit = self

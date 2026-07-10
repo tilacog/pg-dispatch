@@ -2,8 +2,8 @@
 name = "pg-dispatcher"
 version = "0.3.0"
 authors = ["Antônio Roberto <forevertonny@gmail.com>", "Tiago Guimarães <tilacog@gmail.com>"]
-edition = "2021"
-rust-version = "1.74"
+edition = "2024"
+rust-version = "1.85"
 description = "Async PostgreSQL LISTEN/NOTIFY dispatcher that executes a command for each notification"
 license = "GPL-3.0"
 repository = "https://github.com/common-group/pg-dispatcher"
@@ -23,7 +23,6 @@ path = "src/lib.rs"
 clap = { version = "4", features = ["derive"] }
 tokio = { version = "1", features = ["rt", "macros", "process", "io-util", "signal", "rt-multi-thread"] }
 tokio-postgres = "0.7"
-async-trait = "0.1"
 thiserror = "2"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }

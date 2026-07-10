@@ -1,6 +1,5 @@
 use std::future::poll_fn;
 
-use async_trait::async_trait;
 use tokio::sync::mpsc;
 use tokio_postgres::AsyncMessage;
 use tracing::{debug, warn};
@@ -67,7 +66,6 @@ impl PgNotificationSource {
     }
 }
 
-#[async_trait]
 impl NotificationSource for PgNotificationSource {
     async fn next_payload(&mut self) -> Option<String> {
         self.rx.recv().await.map_or_else(
