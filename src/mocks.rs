@@ -9,6 +9,7 @@ pub struct MockNotificationSource {
 }
 
 impl MockNotificationSource {
+    #[must_use]
     pub fn new(payloads: Vec<String>) -> Self {
         Self { payloads, index: 0 }
     }
@@ -46,6 +47,7 @@ pub struct FailingCommandRunner {
 }
 
 impl FailingCommandRunner {
+    #[must_use]
     pub fn new(fail_on: usize) -> Self {
         Self {
             invocations: Arc::new(Mutex::new(vec![])),
@@ -62,7 +64,7 @@ impl CommandRunner for FailingCommandRunner {
             inv.len()
         };
         if count == self.fail_on {
-            Err(RunError::Exit { code: Some(1) })
+            Err(RunError::Exit(crate::traits::ExitError { code: Some(1) }))
         } else {
             Ok(())
         }

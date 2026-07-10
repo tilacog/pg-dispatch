@@ -3,6 +3,8 @@ use std::process::{Command, Stdio};
 use std::sync::mpsc;
 use std::thread;
 
+use tracing::{debug, error, info, warn};
+
 use crate::traits::{CommandRunner, CommandSpec, RunError};
 
 /// Messages exchanged on the job channel.
@@ -12,18 +14,30 @@ enum Message {
 }
 
 /// A fixed-size thread pool that runs a configurable command for each
-/// payload received via [`ThreadPool::execute`].
+/// payload received via [`CommandRunner::run`].
+///
+/// Each worker spawns the configured command, writes the payload to its
+/// stdin, and propagates stdout/stderr line-by-line. Workers run
+/// concurrently, up to the configured pool size.
+///
+/// # Panics
+/// [`ThreadPool::new`] panics if `size` is zero.
+///
+/// # Shutdown
+/// On drop, all workers are sent a terminate signal and joined. This
+/// ensures no worker is left running after the pool is destroyed.
 pub struct ThreadPool {
     workers: Vec<Worker>,
     sender: Option<mpsc::Sender<Message>>,
 }
 
 impl ThreadPool {
-    /// Create a pool with `size` workers, each running `command` (program +
-    /// arguments) when a payload arrives.
+    /// Create a pool with `size` workers, each running `command` when a
+    /// payload arrives.
     ///
     /// # Panics
     /// Panics if `size` is zero.
+    #[must_use]
     pub fn new(size: usize, command: CommandSpec) -> Self {
         assert!(size > 0, "thread pool size must be greater than zero");
 
@@ -45,26 +59,25 @@ impl ThreadPool {
 
 impl CommandRunner for ThreadPool {
     fn run(&self, payload: &str) -> Result<(), RunError> {
-        match &self.sender {
-            Some(sender) => sender
-                .send(Message::Payload(payload.to_owned()))
-                .map_err(|_| RunError::Spawn("worker channel closed".into())),
-            None => Err(RunError::Spawn("worker channel closed".into())),
-        }
-        .map(|_| ())
+        self.sender.as_ref().map_or_else(
+            || Err(RunError::Spawn("worker channel closed".into())),
+            |sender| {
+                sender
+                    .send(Message::Payload(payload.to_owned()))
+                    .map_err(|_| RunError::Spawn("worker channel closed".into()))
+            },
+        )
     }
 }
 
 impl Drop for ThreadPool {
     fn drop(&mut self) {
-        // Signal termination to all workers.
         if let Some(sender) = self.sender.take() {
             for _ in &self.workers {
                 let _ = sender.send(Message::Terminate);
             }
         }
 
-        // Wait for each worker to finish.
         for worker in &mut self.workers {
             if let Some(handle) = worker.handle.take() {
                 let _ = handle.join();
@@ -86,13 +99,11 @@ impl Worker {
         command: std::sync::Arc<CommandSpec>,
     ) -> Self {
         let handle = thread::spawn(move || loop {
-            // Lock, receive, and immediately drop the guard so other workers
-            // can pick up the next message.
             let message = {
                 let guard = match receiver.lock() {
                     Ok(g) => g,
                     Err(e) => {
-                        eprintln!("[worker-{id}] receiver lock poisoned: {e}");
+                        error!(worker = id, error = %e, "receiver lock poisoned");
                         break;
                     }
                 };
@@ -129,21 +140,18 @@ fn run_command(id: usize, command: &CommandSpec, payload: &str) {
     {
         Ok(child) => child,
         Err(e) => {
-            eprintln!("[worker-{id}] failed to spawn command: {e}");
+            error!(worker = id, error = %e, "failed to spawn command");
             return;
         }
     };
 
-    // Write payload to stdin and close it.
     if let Some(mut stdin) = child.stdin.take() {
         if let Err(e) = stdin.write_all(payload.as_bytes()) {
-            eprintln!("[worker-{id}] failed to write to stdin: {e}");
+            warn!(worker = id, error = %e, "failed to write to stdin");
         }
         // stdin is dropped here, signaling EOF to the child.
     }
 
-    // Read stdout and stderr concurrently while the process runs.
-    // This avoids deadlocks when the child fills an OS pipe buffer.
     let program_name = command.program.to_string_lossy().into_owned();
     let stdout = child.stdout.take();
     let stderr = child.stderr.take();
@@ -153,8 +161,8 @@ fn run_command(id: usize, command: &CommandSpec, payload: &str) {
         thread::spawn(move || {
             for line in BufReader::new(stream).lines() {
                 match line {
-                    Ok(line) => println!("[{name}-{id}] {line}"),
-                    Err(e) => eprintln!("[{name}-{id}] stdout read error: {e}"),
+                    Ok(line) => info!(worker = id, command = %name, "{line}"),
+                    Err(e) => warn!(worker = id, command = %name, error = %e, "stdout read error"),
                 }
             }
         })
@@ -165,8 +173,8 @@ fn run_command(id: usize, command: &CommandSpec, payload: &str) {
         thread::spawn(move || {
             for line in BufReader::new(stream).lines() {
                 match line {
-                    Ok(line) => eprintln!("[{name}-{id}] {line}"),
-                    Err(e) => eprintln!("[{name}-{id}] stderr read error: {e}"),
+                    Ok(line) => warn!(worker = id, command = %name, "{line}"),
+                    Err(e) => warn!(worker = id, command = %name, error = %e, "stderr read error"),
                 }
             }
         })
@@ -175,12 +183,11 @@ fn run_command(id: usize, command: &CommandSpec, payload: &str) {
     let exit_status = match child.wait() {
         Ok(status) => status,
         Err(e) => {
-            eprintln!("[worker-{id}] failed to wait for command: {e}");
+            error!(worker = id, error = %e, "failed to wait for command");
             return;
         }
     };
 
-    // Join stream threads so all output is flushed before we log the result.
     if let Some(h) = stdout_handle {
         let _ = h.join();
     }
@@ -190,13 +197,13 @@ fn run_command(id: usize, command: &CommandSpec, payload: &str) {
 
     match exit_status.code() {
         Some(code) if exit_status.success() => {
-            println!("[worker-{id}] command succeeded with status code {code}.");
+            debug!(worker = id, code, "command succeeded");
         }
         Some(code) => {
-            eprintln!("[worker-{id}] {program_name} failed with status code {code}.");
+            warn!(worker = id, command = %program_name, code, "command failed");
         }
         None => {
-            eprintln!("[worker-{id}] {program_name} terminated by a signal.");
+            warn!(worker = id, command = %program_name, "command terminated by signal");
         }
     }
 }
