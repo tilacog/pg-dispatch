@@ -35,7 +35,15 @@ async fn run(config: &Config) -> Result<(), Error> {
     let runner = CommandExecutor::new(config.max_concurrency, spec);
     let dispatcher = Dispatcher::new(runner);
 
-    dispatcher.run(&mut source).await;
+    // Shut down on Ctrl+C or SIGTERM.
+    let shutdown = async {
+        tokio::signal::ctrl_c()
+            .await
+            .expect("failed to install Ctrl+C handler");
+        tracing::info!("received Ctrl+C, initiating graceful shutdown");
+    };
+
+    dispatcher.run(&mut source, shutdown).await;
 
     Ok(())
 }

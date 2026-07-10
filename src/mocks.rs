@@ -28,7 +28,7 @@ impl NotificationSource for MockNotificationSource {
 }
 
 /// A mock [`CommandRunner`] that records every payload it receives.
-#[derive(Default)]
+#[derive(Default, Clone)]
 pub struct MockCommandRunner {
     pub invocations: Arc<Mutex<Vec<String>>>,
 }
@@ -41,6 +41,7 @@ impl CommandRunner for MockCommandRunner {
 }
 
 /// A mock [`CommandRunner`] that always fails on the Nth invocation.
+#[derive(Clone)]
 pub struct FailingCommandRunner {
     pub invocations: Arc<Mutex<Vec<String>>>,
     pub fail_on: usize,

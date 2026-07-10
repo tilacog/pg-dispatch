@@ -39,7 +39,11 @@
 //! let runner = CommandExecutor::new(4, command);
 //! let dispatcher = Dispatcher::new(runner);
 //!
-//! dispatcher.run(&mut source).await;
+//! // Shut down on Ctrl+C. Use `std::future::pending::<()>()` to never shut down.
+//! let shutdown = async {
+//!     let _ = tokio::signal::ctrl_c().await;
+//! };
+//! dispatcher.run(&mut source, shutdown).await;
 //! # Ok(())
 //! # }
 //! ```

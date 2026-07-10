@@ -16,6 +16,7 @@ use crate::traits::{CommandRunner, CommandSpec, ExitError, RunError};
 ///
 /// This replaces the previous thread-pool design with a lighter-weight
 /// async approach — no OS threads are spawned per payload.
+#[derive(Clone)]
 pub struct CommandExecutor {
     command: Arc<CommandSpec>,
     semaphore: Arc<Semaphore>,
