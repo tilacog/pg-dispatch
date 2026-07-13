@@ -21,15 +21,9 @@ test:
 crap-setup:
     cargo install cargo-crap
 
-# Run cargo-crap (must run crap-setup first)
+# Run cargo-crap with --fail-above for CI gate
 crap:
-    #!/usr/bin/env bash
-    set -euo pipefail
-    OUTPUT=$(cargo crap 2>&1)
-    echo "$OUTPUT"
-    if echo "$OUTPUT" | grep -q '✗'; then
-        exit 1
-    fi
+    cargo crap --fail-above
 
 # Full CI pipeline
 ci: fmt clippy test crap
