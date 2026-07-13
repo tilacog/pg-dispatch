@@ -2,8 +2,9 @@ use std::process::Stdio;
 use std::sync::Arc;
 
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
-use tokio::process::Command;
+use tokio::process::{Child, Command};
 use tokio::sync::Semaphore;
+use tokio::task::JoinHandle;
 use tracing::{debug, info, warn};
 
 use crate::traits::{CommandRunner, CommandSpec, ExitError, RunError};
@@ -51,95 +52,108 @@ impl CommandRunner for CommandExecutor {
 
         let program_name = self.command.program.to_string_lossy().into_owned();
 
-        let mut child = Command::new(&self.command.program)
-            .args(&self.command.args)
-            .stdin(Stdio::piped())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            .spawn()
-            .map_err(|e| RunError::Spawn(e.to_string()))?;
+        let mut child = spawn_command(&self.command, &payload).await?;
 
-        // Write payload to stdin and close it.
-        if let Some(mut stdin) = child.stdin.take() {
-            if let Err(e) = stdin.write_all(payload.as_bytes()).await {
-                warn!(error = %e, "failed to write to stdin");
-            }
-            // stdin is dropped here, signaling EOF to the child.
-        }
-
-        // Read stdout and stderr concurrently.
-        let stdout = child.stdout.take();
-        let stderr = child.stderr.take();
-
-        let stdout_task = stdout.map(|stream| {
-            let name = program_name.clone();
-            tokio::spawn(async move {
-                let mut reader = BufReader::new(stream);
-                let mut line = String::new();
-                loop {
-                    line.clear();
-                    match reader.read_line(&mut line).await {
-                        Ok(0) => break,
-                        Ok(_) => {
-                            let trimmed = line.trim_end();
-                            info!(command = %name, "{trimmed}");
-                        }
-                        Err(e) => {
-                            warn!(command = %name, error = %e, "stdout read error");
-                            break;
-                        }
-                    }
-                }
-            })
-        });
-
-        let stderr_task = stderr.map(|stream| {
-            let name = program_name.clone();
-            tokio::spawn(async move {
-                let mut reader = BufReader::new(stream);
-                let mut line = String::new();
-                loop {
-                    line.clear();
-                    match reader.read_line(&mut line).await {
-                        Ok(0) => break,
-                        Ok(_) => {
-                            let trimmed = line.trim_end();
-                            warn!(command = %name, "{trimmed}");
-                        }
-                        Err(e) => {
-                            warn!(command = %name, error = %e, "stderr read error");
-                            break;
-                        }
-                    }
-                }
-            })
-        });
+        let stdout_task = child.stdout.take().map(spawn_stdout_reader);
+        let stderr_task = child.stderr.take().map(spawn_stderr_reader);
 
         let exit_status = child
             .wait()
             .await
             .map_err(|e| RunError::Spawn(e.to_string()))?;
 
-        if let Some(task) = stdout_task {
-            let _ = task.await;
-        }
-        if let Some(task) = stderr_task {
-            let _ = task.await;
-        }
+        join_stream_tasks(stdout_task, stderr_task).await;
 
-        match exit_status.code() {
-            Some(code) if exit_status.success() => {
-                debug!(code, "command succeeded");
-                Ok(())
+        log_exit_status(&program_name, exit_status)
+    }
+}
+
+/// Spawn the configured command, write `payload` to stdin, and return the
+/// child process.
+async fn spawn_command(command: &CommandSpec, payload: &str) -> Result<Child, RunError> {
+    let mut child = Command::new(&command.program)
+        .args(&command.args)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .map_err(|e| RunError::Spawn(e.to_string()))?;
+
+    if let Some(mut stdin) = child.stdin.take() {
+        if let Err(e) = stdin.write_all(payload.as_bytes()).await {
+            warn!(error = %e, "failed to write to stdin");
+        }
+        // stdin is dropped here, signaling EOF to the child.
+    }
+
+    Ok(child)
+}
+
+/// Spawn a task that reads stdout line-by-line and logs each line.
+fn spawn_stdout_reader(stream: tokio::process::ChildStdout) -> JoinHandle<()> {
+    tokio::spawn(async move {
+        let mut reader = BufReader::new(stream);
+        let mut line = String::new();
+        loop {
+            line.clear();
+            match reader.read_line(&mut line).await {
+                Ok(0) => break,
+                Ok(_) => info!(command = "stdout", "{}", line.trim_end()),
+                Err(e) => {
+                    warn!(command = "stdout", error = %e, "read error");
+                    break;
+                }
             }
-            Some(code) => {
-                warn!(command = %program_name, code, "command failed");
-                Err(RunError::Exit(ExitError { code: Some(code) }))
+        }
+    })
+}
+
+/// Spawn a task that reads stderr line-by-line and logs each line.
+fn spawn_stderr_reader(stream: tokio::process::ChildStderr) -> JoinHandle<()> {
+    tokio::spawn(async move {
+        let mut reader = BufReader::new(stream);
+        let mut line = String::new();
+        loop {
+            line.clear();
+            match reader.read_line(&mut line).await {
+                Ok(0) => break,
+                Ok(_) => warn!(command = "stderr", "{}", line.trim_end()),
+                Err(e) => {
+                    warn!(command = "stderr", error = %e, "read error");
+                    break;
+                }
             }
-            None => {
-                warn!(command = %program_name, "command terminated by signal");
-                Err(RunError::Exit(ExitError { code: None }))
-            }
+        }
+    })
+}
+
+/// Await both stream-reading tasks so all output is flushed.
+async fn join_stream_tasks(stdout: Option<JoinHandle<()>>, stderr: Option<JoinHandle<()>>) {
+    if let Some(task) = stdout {
+        let _ = task.await;
+    }
+    if let Some(task) = stderr {
+        let _ = task.await;
+    }
+}
+
+/// Log the exit status and return `Ok` for success, `Err` for failure.
+fn log_exit_status(
+    program_name: &str,
+    exit_status: std::process::ExitStatus,
+) -> Result<(), RunError> {
+    match exit_status.code() {
+        Some(code) if exit_status.success() => {
+            debug!(code, "command succeeded");
+            Ok(())
+        }
+        Some(code) => {
+            warn!(command = program_name, code, "command failed");
+            Err(RunError::Exit(ExitError { code: Some(code) }))
+        }
+        None => {
+            warn!(command = program_name, "command terminated by signal");
+            Err(RunError::Exit(ExitError { code: None }))
         }
     }
 }

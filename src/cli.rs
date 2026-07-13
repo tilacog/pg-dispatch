@@ -184,7 +184,7 @@ mod tests {
     fn validate_rejects_empty_channel() {
         let config = Config {
             db_url: "postgres://localhost".into(),
-            db_channel: "".into(),
+            db_channel: String::new(),
             max_concurrency: 4,
             command: vec![OsString::from("cat")],
         };

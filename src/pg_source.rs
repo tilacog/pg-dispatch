@@ -30,39 +30,51 @@ impl PgNotificationSource {
     pub async fn connect(db_url: &str, channel: &str) -> Result<Self, Error> {
         validate_channel_name(channel)?;
 
-        let (client, mut connection) =
-            tokio_postgres::connect(db_url, tokio_postgres::NoTls).await?;
+        let (client, connection) = tokio_postgres::connect(db_url, tokio_postgres::NoTls).await?;
 
         client.batch_execute(&format!("LISTEN {channel}")).await?;
 
         debug!(channel, "LISTEN issued");
 
-        // The connection drives the async protocol. We poll it in a background
-        // task and forward notification payloads to an mpsc channel.
         let (tx, rx) = mpsc::channel(64);
-
-        tokio::spawn(async move {
-            loop {
-                let result = poll_fn(|cx| connection.poll_message(cx)).await;
-
-                match result {
-                    Some(Ok(AsyncMessage::Notification(n))) => {
-                        let payload = n.payload().to_owned();
-                        if tx.send(payload).await.is_err() {
-                            break;
-                        }
-                    }
-                    Some(Ok(_)) => {} // Notice/NoticeResponse etc.
-                    Some(Err(e)) => {
-                        tracing::error!(error = %e, "postgres connection error");
-                        break;
-                    }
-                    None => break, // Connection ended.
-                }
-            }
-        });
+        tokio::spawn(forward_notifications(connection, tx));
 
         Ok(Self { rx })
+    }
+}
+
+/// Background task that polls the `PostgreSQL` connection and forwards
+/// notification payloads to the channel.
+async fn forward_notifications<S, T>(
+    mut connection: tokio_postgres::Connection<S, T>,
+    tx: mpsc::Sender<String>,
+) where
+    S: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin,
+    T: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin,
+{
+    while let Some(result) = poll_fn(|cx| connection.poll_message(cx)).await {
+        if !handle_async_message(result, &tx).await {
+            break;
+        }
+    }
+}
+
+/// Process a single async message from the `PostgreSQL` connection.
+/// Returns `false` if the connection should stop.
+async fn handle_async_message(
+    result: Result<AsyncMessage, tokio_postgres::Error>,
+    tx: &mpsc::Sender<String>,
+) -> bool {
+    match result {
+        Ok(AsyncMessage::Notification(n)) => {
+            let payload = n.payload().to_owned();
+            tx.send(payload).await.is_ok()
+        }
+        Ok(_) => true,
+        Err(e) => {
+            tracing::error!(error = %e, "postgres connection error");
+            false
+        }
     }
 }
 
